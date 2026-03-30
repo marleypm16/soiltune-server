@@ -74,6 +74,4 @@ Dispositivo ESP publica no tópico MQTT configurado:
 
 O servidor irá registrar automaticamente esses dados no InfluxDB.
 
-## Licença
 
-MIT
