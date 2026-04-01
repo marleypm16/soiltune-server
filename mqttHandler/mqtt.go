@@ -1,4 +1,4 @@
-package main
+package mqttHandler
 
 import (
 	"log"
@@ -7,7 +7,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-func mqttHandler(messageHandler mqtt.MessageHandler) {
+func MqttHandler(messageHandler mqtt.MessageHandler) {
 	// MQTT broker configuration
 	mqttBroker := os.Getenv("MQTTBROKER")
 	mqttTopic := os.Getenv("MQTTTOPIC")
