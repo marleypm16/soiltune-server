@@ -1,4 +1,4 @@
-package main
+package influxdb
 
 import (
 	"context"
@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"soiltune-consumer/models"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 )
 
-func influxDBHandler() mqtt.MessageHandler {
+func InfluxDBHandler() mqtt.MessageHandler {
 	// Load InfluxDB configuration from environment variables
 	influxDBURL := os.Getenv("DBINFLUX")
 	influxDBToken := os.Getenv("DBINFLUXTOKEN")
@@ -25,7 +26,7 @@ func influxDBHandler() mqtt.MessageHandler {
 
 	// MQTT message handler
 	messageHandler := func(client mqtt.Client, msg mqtt.Message) {
-		var data SensorData
+		var data models.SensorData
 		err := json.Unmarshal(msg.Payload(), &data)
 		if err != nil {
 			log.Printf("Error parsing JSON: %v", err)
