@@ -1,0 +1,61 @@
+services:
+  influxdb:
+    image: influxdb:2
+    container_name: influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    # Substituído pela leitura direta do .env, muito mais limpo!
+    env_file:
+      - .env
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - influxdb
+
+  mosquito:
+    image: eclipse-mosquitto:latest
+    container_name: mosquito
+    ports:
+      - "1883:1883" # Porta MQTT padrão
+      - "9001:9001" # Porta para WebSockets (opcional)
+    volumes:
+      - ./internal/mosquitto/config:/mosquitto/config
+      - ./internal/mosquitto/data:/mosquitto/data
+      - ./internal/mosquitto/log:/mosquitto/log
+
+  consumer:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+      target: consumer
+    container_name: consumer
+    env_file:
+      - .env
+    depends_on:
+      - influxdb
+      - mosquito
+
+  api:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    container_name: api
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mosquito
+
+volumes:
+  influxdb_data:
+  grafana_data:

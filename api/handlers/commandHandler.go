@@ -3,37 +3,46 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+
 	"soiltune-consumer/api/services"
-	"soiltune-consumer/models"
+	"soiltune-consumer/internal/models"
 
 	"github.com/gofiber/fiber/v3"
 )
 
-func CommandHandler(c fiber.Ctx) error {
+type CommandHandler struct {
+	service *services.CommandService
+}
+
+func NewCommandHandler(service *services.CommandService) *CommandHandler {
+	return &CommandHandler{service: service}
+}
+
+func (h *CommandHandler) Handle(c fiber.Ctx) error {
 	sensorID := c.Params("sensorId")
 	if sensorID == "" {
-		return c.Status(400).SendString("Missing sensorId")
+		return c.Status(fiber.StatusBadRequest).SendString("Missing sensorId")
 	}
 
 	comando := c.Body()
 	if len(comando) == 0 {
-		return c.Status(400).SendString("Missing command in request body")
+		return c.Status(fiber.StatusBadRequest).SendString("Missing command in request body")
 	}
 
 	var payload models.Command
 	if err := json.Unmarshal(comando, &payload); err != nil {
-		return c.Status(400).SendString("Invalid JSON body")
+		return c.Status(fiber.StatusBadRequest).SendString("Invalid JSON body")
 	}
 	if payload.Command == nil {
-		return c.Status(400).SendString("Missing command field in request body")
+		return c.Status(fiber.StatusBadRequest).SendString("Missing command field in request body")
 	}
 
-	service := services.CommandService(sensorID, comando)
-	if service != nil {
-		if errors.Is(service, fiber.ErrServiceUnavailable) {
-			return c.Status(503).SendString("MQTT client is not connected")
+	if err := h.service.Execute(sensorID, payload); err != nil {
+		if errors.Is(err, fiber.ErrServiceUnavailable) {
+			return c.Status(fiber.StatusServiceUnavailable).SendString("MQTT client is not connected")
 		}
-		return c.Status(500).SendString("Error occurred while processing command")
+		return c.Status(fiber.StatusInternalServerError).SendString("Error occurred while processing command")
 	}
-	return c.SendStatus(200)
+
+	return c.SendStatus(fiber.StatusOK)
 }
