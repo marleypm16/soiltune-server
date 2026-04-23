@@ -6,6 +6,6 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-func SetupRoutes(app *fiber.App) {
-	app.Post("/command/:sensorId", handlers.CommandHandler)
+func SetupRoutes(app *fiber.App, commandHandler *handlers.CommandHandler) {
+	app.Post("/command/:sensorId", commandHandler.Handle)
 }
