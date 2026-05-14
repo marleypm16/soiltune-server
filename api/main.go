@@ -34,13 +34,26 @@ func main() {
 	service := services.NewCommandService(repo)
 	commandHandler := handlers.NewCommandHandler(service)
 
+	// InfluxDB service and sensor handler
+	influxCfg, err := config.LoadInfluxConfig()
+	if err != nil {
+		log.Fatalf("loading influx config: %v", err)
+	}
+	influxSvc, err := services.NewInfluxService(influxCfg)
+	if err != nil {
+		log.Fatalf("creating influx service: %v", err)
+	}
+	defer influxSvc.Close()
+
+	sensorHandler := handlers.NewSensorHandler(influxSvc)
+
 	app := fiber.New(fiber.Config{
 		CaseSensitive: false,
 		BodyLimit:     256 * 1024,
 		AppName:       "soiltune-api",
 	})
 
-	routes.SetupRoutes(app, commandHandler)
+	routes.SetupRoutes(app, commandHandler, sensorHandler)
 	log.Printf("api listening on :8000")
 
 	errCh := make(chan error, 1)

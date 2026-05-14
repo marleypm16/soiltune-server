@@ -30,6 +30,30 @@ func (s *Service) Close() {
 	}
 }
 
+// Query executes a Flux query against InfluxDB and returns each record's values as a map.
+func (s *Service) Query(ctx context.Context, flux string) ([]map[string]interface{}, error) {
+	queryAPI := s.client.QueryAPI(s.org)
+	result, err := queryAPI.Query(ctx, flux)
+	if err != nil {
+		return nil, err
+	}
+
+	var rows []map[string]interface{}
+	for result.Next() {
+		rec := result.Record()
+		if rec == nil {
+			continue
+		}
+		rows = append(rows, rec.Values())
+	}
+
+	if result.Err() != nil {
+		return nil, result.Err()
+	}
+
+	return rows, nil
+}
+
 func (s *Service) Handler() mqtt.MessageHandler {
 	return func(client mqtt.Client, msg mqtt.Message) {
 		var data models.SensorData
