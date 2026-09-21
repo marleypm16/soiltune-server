@@ -30,7 +30,7 @@ func (r *CommandRepository) Publish(sensorID string, command models.Command) err
 		return err
 	}
 
-	topic := "/comandos/" + sensorID
+	topic := "soiltune/commands/" + sensorID
 	log.Printf("publishing command: topic=%s", topic)
 	token := r.client.Publish(topic, 0, false, payload)
 	if !token.WaitTimeout(5 * time.Second) {

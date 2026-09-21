@@ -3,12 +3,15 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"regexp"
 
 	"soiltune-consumer/api/services"
 	"soiltune-consumer/internal/models"
 
 	"github.com/gofiber/fiber/v3"
 )
+
+var sensorIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
 type CommandHandler struct {
 	service *services.CommandService
@@ -20,8 +23,8 @@ func NewCommandHandler(service *services.CommandService) *CommandHandler {
 
 func (h *CommandHandler) Handle(c fiber.Ctx) error {
 	sensorID := c.Params("sensorId")
-	if sensorID == "" {
-		return c.Status(fiber.StatusBadRequest).SendString("Missing sensorId")
+	if !sensorIDPattern.MatchString(sensorID) {
+		return c.Status(fiber.StatusBadRequest).SendString("Invalid sensorId")
 	}
 
 	comando := c.Body()
@@ -36,6 +39,9 @@ func (h *CommandHandler) Handle(c fiber.Ctx) error {
 	if payload.Command == nil {
 		return c.Status(fiber.StatusBadRequest).SendString("Missing command field in request body")
 	}
+	if !payload.IsValid() {
+		return c.Status(fiber.StatusBadRequest).SendString("Command must be 0 (off) or 1 (on)")
+	}
 
 	if err := h.service.Execute(sensorID, payload); err != nil {
 		if errors.Is(err, fiber.ErrServiceUnavailable) {
@@ -44,5 +50,5 @@ func (h *CommandHandler) Handle(c fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).SendString("Error occurred while processing command")
 	}
 
-	return c.SendStatus(fiber.StatusOK)
+	return c.SendStatus(fiber.StatusAccepted)
 }

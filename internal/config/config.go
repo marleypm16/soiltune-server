@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/joho/godotenv"
@@ -12,7 +13,7 @@ var loadEnvOnce sync.Once
 
 func ensureEnvLoaded() {
 	loadEnvOnce.Do(func() {
-		_ = godotenv.Overload(".env")
+		_ = godotenv.Load(".env")
 	})
 }
 
@@ -20,6 +21,12 @@ type MQTTConfig struct {
 	Broker   string
 	Topic    string
 	ClientID string
+	Username string
+	Password string
+}
+
+type APIConfig struct {
+	Key string
 }
 
 type InfluxConfig struct {
@@ -34,6 +41,8 @@ func LoadMQTTConfig(clientID string, requireTopic bool) (MQTTConfig, error) {
 
 	broker := os.Getenv("MQTTBROKER")
 	topic := os.Getenv("MQTTTOPIC")
+	username := os.Getenv("MQTT_USERNAME")
+	password := os.Getenv("MQTT_PASSWORD")
 
 	if broker == "" {
 		return MQTTConfig{}, fmt.Errorf("MQTTBROKER is required")
@@ -41,11 +50,34 @@ func LoadMQTTConfig(clientID string, requireTopic bool) (MQTTConfig, error) {
 	if requireTopic && topic == "" {
 		return MQTTConfig{}, fmt.Errorf("MQTTTOPIC is required")
 	}
+	if username == "" {
+		return MQTTConfig{}, fmt.Errorf("MQTT_USERNAME is required")
+	}
+	if password == "" {
+		return MQTTConfig{}, fmt.Errorf("MQTT_PASSWORD is required")
+	}
 	if clientID == "" {
 		clientID = "soiltune-client"
 	}
 
-	return MQTTConfig{Broker: broker, Topic: topic, ClientID: clientID}, nil
+	return MQTTConfig{
+		Broker:   broker,
+		Topic:    topic,
+		ClientID: clientID,
+		Username: username,
+		Password: password,
+	}, nil
+}
+
+func LoadAPIConfig() (APIConfig, error) {
+	ensureEnvLoaded()
+
+	key := strings.TrimSpace(os.Getenv("API_KEY"))
+	if len(key) < 32 {
+		return APIConfig{}, fmt.Errorf("API_KEY must contain at least 32 characters")
+	}
+
+	return APIConfig{Key: key}, nil
 }
 
 func LoadInfluxConfig() (InfluxConfig, error) {
@@ -60,13 +92,13 @@ func LoadInfluxConfig() (InfluxConfig, error) {
 		return InfluxConfig{}, fmt.Errorf("DBINFLUX is required")
 	}
 	if token == "" {
-		return InfluxConfig{}, fmt.Errorf("DBINFLUXTOKEN is required")
+		return InfluxConfig{}, fmt.Errorf("DOCKER_INFLUXDB_INIT_ADMIN_TOKEN is required")
 	}
 	if org == "" {
-		return InfluxConfig{}, fmt.Errorf("DBINFLUXORG is required")
+		return InfluxConfig{}, fmt.Errorf("DOCKER_INFLUXDB_INIT_ORG is required")
 	}
 	if bucket == "" {
-		return InfluxConfig{}, fmt.Errorf("DBINFLUXBUCKET is required")
+		return InfluxConfig{}, fmt.Errorf("DOCKER_INFLUXDB_INIT_BUCKET is required")
 	}
 
 	return InfluxConfig{URL: url, Token: token, Org: org, Bucket: bucket}, nil
