@@ -1,0 +1,13 @@
+.git
+.github
+.vscode
+.env*
+AUDITORIA.md
+coverage.out
+coverage/
+bin/
+dist/
+*.exe
+*.test
+internal/mosquitto/data/
+internal/mosquitto/log/
