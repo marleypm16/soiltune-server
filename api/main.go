@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"soiltune-consumer/api/handlers"
+	"soiltune-consumer/api/middleware"
 	"soiltune-consumer/api/repository"
 	"soiltune-consumer/api/routes"
 	"soiltune-consumer/api/services"
@@ -18,6 +19,11 @@ import (
 
 func main() {
 	log.Printf("starting soiltune command API")
+
+	apiConfig, err := config.LoadAPIConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	mqttConfig, err := config.LoadMQTTConfig("soiltune-api", false)
 	if err != nil {
@@ -40,7 +46,7 @@ func main() {
 		AppName:       "soiltune-api",
 	})
 
-	routes.SetupRoutes(app, commandHandler)
+	routes.SetupRoutes(app, commandHandler, middleware.RequireAPIKey(apiConfig.Key))
 	log.Printf("api listening on :8000")
 
 	errCh := make(chan error, 1)
