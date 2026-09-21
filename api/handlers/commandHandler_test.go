@@ -1,24 +1,82 @@
 package handlers
 
-import "testing"
+import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
 
-func TestSensorIDPattern(t *testing.T) {
+	"soiltune-consumer/internal/apperrors"
+	"soiltune-consumer/internal/models"
+
+	"github.com/gofiber/fiber/v3"
+)
+
+type fakeCommandExecutor struct {
+	err      error
+	sensorID string
+	command  models.Command
+}
+
+func (fake *fakeCommandExecutor) Execute(sensorID string, command models.Command) error {
+	fake.sensorID = sensorID
+	fake.command = command
+	return fake.err
+}
+
+func TestCommandHandlerValidation(t *testing.T) {
 	tests := []struct {
-		id   string
-		want bool
+		name       string
+		sensorID   string
+		body       string
+		wantStatus int
 	}{
-		{id: "sensor-01", want: true},
-		{id: "field_sensor_2", want: true},
-		{id: "", want: false},
-		{id: "-sensor", want: false},
-		{id: "sensor/other", want: false},
-		{id: "sensor+#", want: false},
-		{id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", want: false},
+		{name: "valid", sensorID: "sensor-01", body: `{"command":1}`, wantStatus: fiber.StatusAccepted},
+		{name: "invalid sensor id", sensorID: "-sensor", body: `{"command":1}`, wantStatus: fiber.StatusBadRequest},
+		{name: "unknown field", sensorID: "sensor-01", body: `{"command":1,"other":true}`, wantStatus: fiber.StatusBadRequest},
+		{name: "invalid command", sensorID: "sensor-01", body: `{"command":2}`, wantStatus: fiber.StatusBadRequest},
+		{name: "multiple objects", sensorID: "sensor-01", body: `{"command":1}{"command":0}`, wantStatus: fiber.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
-		if got := sensorIDPattern.MatchString(tt.id); got != tt.want {
-			t.Errorf("sensorIDPattern.MatchString(%q) = %v, want %v", tt.id, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			executor := &fakeCommandExecutor{}
+			app := fiber.New()
+			app.Post("/command/:sensorId", NewCommandHandler(executor).Handle)
+
+			req := httptest.NewRequest(http.MethodPost, "/command/"+tt.sensorID, strings.NewReader(tt.body))
+			req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+		})
 	}
+}
+
+func TestCommandHandlerMapsUnavailableDependency(t *testing.T) {
+	executor := &fakeCommandExecutor{err: fmtUnavailable()}
+	app := fiber.New()
+	app.Post("/command/:sensorId", NewCommandHandler(executor).Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/command/sensor-01", strings.NewReader(`{"command":0}`))
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != fiber.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, fiber.StatusServiceUnavailable)
+	}
+}
+
+func fmtUnavailable() error {
+	return errors.Join(errors.New("publish failed"), apperrors.ErrUnavailable)
 }

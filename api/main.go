@@ -36,7 +36,7 @@ func main() {
 	}
 	defer mqttClient.Disconnect(250)
 
-	repo := repository.NewCommandRepository(mqttClient)
+	repo := repository.NewCommandRepository(mqttClient, mqttConfig.QoS)
 	service := services.NewCommandService(repo)
 	commandHandler := handlers.NewCommandHandler(service)
 
@@ -46,12 +46,12 @@ func main() {
 		AppName:       "soiltune-api",
 	})
 
-	routes.SetupRoutes(app, commandHandler, middleware.RequireAPIKey(apiConfig.Key))
-	log.Printf("api listening on :8000")
+	routes.SetupRoutes(app, commandHandler, middleware.RequireAPIKey(apiConfig.Key), mqttClient.IsConnected)
+	log.Printf("api listening on %s", apiConfig.Address)
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- app.Listen(":8000")
+		errCh <- app.Listen(apiConfig.Address)
 	}()
 
 	shutdown := make(chan os.Signal, 1)

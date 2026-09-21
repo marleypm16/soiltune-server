@@ -1,18 +1,19 @@
 package services
 
-import (
-	"soiltune-consumer/api/repository"
-	"soiltune-consumer/internal/models"
-)
+import "soiltune-consumer/internal/models"
 
-type CommandService struct {
-	repository *repository.CommandRepository
+type CommandPublisher interface {
+	Publish(sensorID string, command models.Command) error
 }
 
-func NewCommandService(repository *repository.CommandRepository) *CommandService {
-	return &CommandService{repository: repository}
+type CommandService struct {
+	publisher CommandPublisher
+}
+
+func NewCommandService(publisher CommandPublisher) *CommandService {
+	return &CommandService{publisher: publisher}
 }
 
 func (s *CommandService) Execute(sensorID string, command models.Command) error {
-	return s.repository.Publish(sensorID, command)
+	return s.publisher.Publish(sensorID, command)
 }

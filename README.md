@@ -1,47 +1,58 @@
 # soiltune-server
 
-Servidor dedicado do projeto Soiltune para armazenar dados de sensores enviados por dispositivos ESP via MQTT e persistir essas informações no InfluxDB.
+Backend IoT do Soiltune para receber telemetria de dispositivos via MQTT, persistir séries temporais no InfluxDB e enviar comandos de ligar/desligar aos dispositivos.
 
-## Visão Geral
+## Arquitetura
 
-O soiltune-server atua como uma ponte entre dispositivos IoT (como ESP32/ESP8266) e um banco de dados InfluxDB. Ele recebe dados de sensores via MQTT, processa e armazena essas informações de forma eficiente para posterior análise.
+```text
+Dispositivo ── MQTT/QoS 1 ──► Mosquitto ──► Consumer ──► InfluxDB ──► Grafana
+     ▲                              ▲
+     └──── comando MQTT ◄──── API HTTP autenticada
+```
 
-## Funcionalidades
+O repositório gera dois executáveis:
 
-- **Recepção de Dados via MQTT:** O servidor se conecta a um broker MQTT e escuta mensagens em um tópico configurável.
-- **Persistência no InfluxDB:** Cada mensagem recebida é convertida e armazenada como um ponto no InfluxDB, facilitando consultas temporais e análises.
-- **Configuração via Variáveis de Ambiente:** Todos os parâmetros sensíveis (URLs, tokens, tópicos) são configurados por variáveis de ambiente, facilitando o deploy em diferentes ambientes.
+- `soiltune-consumer`: valida mensagens MQTT e grava os pontos no InfluxDB;
+- `soiltune-api`: recebe comandos HTTP autenticados e os publica no MQTT.
 
-## Estrutura dos Dados
+## Contrato de telemetria v1
 
-O payload MQTT deve ser um JSON com o seguinte formato:
+O dispositivo deve publicar em `soiltune/telemetry/{device_id}`. O `sensor_id` do JSON deve ser igual ao `device_id` do tópico.
 
 ```json
 {
-	"sensor_id": "string",
-	"temperature": 0.0,
-	"humidity": 0.0,
-	"weight": 0.0
+  "version": 1,
+  "sensor_id": "sensor-01",
+  "recorded_at": "2026-09-21T12:30:00Z",
+  "temperature": 23.5,
+  "humidity": 60.2,
+  "weight": 150.0,
+  "state": "on"
 }
 ```
 
-## Variáveis de Ambiente
+Regras:
 
-- `MQTTBROKER`: URL do broker MQTT (ex: tcp://localhost:1883)
-- `MQTTTOPIC`: Tópico MQTT para inscrição
-- `MQTT_USERNAME`: Usuário do backend no broker MQTT
-- `MQTT_PASSWORD`: Senha do backend no broker MQTT
-- `MQTT_DEVICE_ID`: Identificador e usuário MQTT do dispositivo local de demonstração
-- `MQTT_DEVICE_PASSWORD`: Senha do dispositivo local de demonstração
-- `API_KEY`: Chave com pelo menos 32 caracteres usada para autorizar comandos
-- `DBINFLUX`: URL do InfluxDB (ex: http://localhost:8086)
-- `DOCKER_INFLUXDB_INIT_ADMIN_TOKEN`: Token de autenticação do InfluxDB
-- `DOCKER_INFLUXDB_INIT_ORG`: Organização do InfluxDB
-- `DOCKER_INFLUXDB_INIT_BUCKET`: Bucket do InfluxDB
+- `version` deve ser `1`;
+- `sensor_id` deve começar com letra ou número e pode conter letras, números, `_` e `-`, até 64 caracteres;
+- `recorded_at` é obrigatório e deve estar em RFC3339;
+- `temperature`, `humidity` e `weight` são obrigatórios, inclusive quando o valor é zero;
+- umidade deve estar entre 0 e 100;
+- peso não pode ser negativo;
+- `state` é opcional e aceita entre 1 e 32 caracteres;
+- campos desconhecidos e múltiplos objetos JSON são rejeitados.
 
-## Envio de comandos
+No InfluxDB, o ponto usa a measurement `sensor_data`, as tags `sensor_id` e `schema_version`, e o timestamp informado em `recorded_at`.
 
-A API envia apenas os comandos `0` (desligar) e `1` (ligar). O identificador da rota deve corresponder ao usuário MQTT do dispositivo.
+### Migração do protótipo
+
+Mensagens antigas sem `version` e `recorded_at` passam a ser rejeitadas. Os campos do InfluxDB também foram padronizados de `temperatura`, `umidade`, `peso` e `estado` para `temperature`, `humidity`, `weight` e `state`. Pontos antigos permanecem no banco, mas consultas e dashboards devem considerar os novos nomes.
+
+## API de comandos
+
+### `POST /command/:sensorId`
+
+Publica `0` para desligar ou `1` para ligar em `soiltune/commands/{sensorId}`.
 
 ```sh
 curl -X POST http://localhost:8080/command/sensor-01 \
@@ -50,52 +61,152 @@ curl -X POST http://localhost:8080/command/sensor-01 \
   -d '{"command":1}'
 ```
 
-Uma resposta `202 Accepted` confirma que o comando foi publicado no broker; ela não confirma que o dispositivo alterou seu estado.
+Respostas principais:
 
-O backend pode ler `soiltune/telemetry/#` e escrever em `soiltune/commands/#`. Cada dispositivo autenticado pode escrever apenas em `soiltune/telemetry/{device_id}` e ler apenas `soiltune/commands/{device_id}`.
+- `202 Accepted`: o broker confirmou a publicação;
+- `400 Bad Request`: identificador, JSON ou comando inválido;
+- `401 Unauthorized`: chave ausente ou inválida;
+- `503 Service Unavailable`: MQTT indisponível.
 
-As senhas MQTT devem ter pelo menos 16 caracteres. No Compose, a API fica vinculada a `127.0.0.1`; para exposição externa, use um proxy reverso com TLS. O listener MQTT local exige autenticação e ACL, mas ainda usa TCP sem criptografia: antes de disponibilizá-lo fora de uma rede confiável, configure MQTT sobre TLS.
+`202` não confirma que o dispositivo alterou fisicamente seu estado. Confirma apenas o despacho para o broker.
 
-## Como Executar
+### Saúde
 
-1. Configure as variáveis de ambiente necessárias.
-2. Compile os dois executáveis:
-	 ```sh
-	 go build -o soiltune-api ./api
-	 go build -o soiltune-consumer ./consumer
-	 ```
-3. Execute os binários:
-	 ```sh
-	 ./soiltune-consumer
-	 ./soiltune-api
-	 ```
+- `GET /health/live`: processo HTTP ativo;
+- `GET /health/ready`: API conectada ao MQTT.
 
-## Dependências
+## Execução com Docker Compose
 
-- Go 1.26+
-- [github.com/eclipse/paho.mqtt.golang](https://github.com/eclipse/paho.mqtt.golang)
-- [github.com/influxdata/influxdb-client-go/v2](https://github.com/influxdata/influxdb-client-go)
+Pré-requisitos:
 
-## Estrutura do Projeto
+- Docker com Docker Compose;
+- portas 1883, 3000, 8080 e 8086 disponíveis.
 
-- `main.go`: Ponto de entrada da aplicação.
-- `mqtt.go`: Lida com a conexão e assinatura MQTT.
-- `influxdb.go`: Processa e armazena os dados no InfluxDB.
-- `go.mod`: Gerenciamento de dependências.
+1. Crie a configuração local:
 
-## Exemplo de Uso
+   ```sh
+   cp .env.example .env
+   ```
 
-Dispositivo ESP publica no tópico MQTT configurado:
+   No PowerShell:
 
-```json
-{
-	"sensor_id": "esp32-01",
-	"temperature": 23.5,
-	"humidity": 60.2,
-	"weight": 150.0
-}
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+2. Preencha todos os valores vazios de `.env`. Use senhas MQTT com pelo menos 16 caracteres e uma `API_KEY` aleatória com pelo menos 32 caracteres.
+
+3. Suba a stack:
+
+   ```sh
+   docker compose up --build
+   ```
+
+4. Verifique a API:
+
+   ```sh
+   curl http://localhost:8080/health/ready
+   ```
+
+O Compose aguarda InfluxDB e Mosquitto ficarem saudáveis antes de iniciar os processos dependentes e reinicia serviços interrompidos.
+
+## Execução local sem Docker
+
+É necessário fornecer InfluxDB e Mosquitto externamente e ajustar `DBINFLUX` e `MQTTBROKER`.
+
+```sh
+go build -o soiltune-api ./api
+go build -o soiltune-consumer ./consumer
+
+./soiltune-consumer
+./soiltune-api
 ```
 
-O servidor irá registrar automaticamente esses dados no InfluxDB.
+## Configuração
 
+| Variável | Obrigatória | Padrão | Finalidade |
+| --- | --- | --- | --- |
+| `DBINFLUX` | sim | — | URL do InfluxDB |
+| `DOCKER_INFLUXDB_INIT_MODE` | no Compose | `setup` no exemplo | Inicialização do InfluxDB |
+| `DOCKER_INFLUXDB_INIT_USERNAME` | no Compose | — | Usuário administrativo inicial |
+| `DOCKER_INFLUXDB_INIT_PASSWORD` | no Compose | — | Senha administrativa inicial |
+| `DOCKER_INFLUXDB_INIT_ORG` | sim | `soiltune` no exemplo | Organização do InfluxDB |
+| `DOCKER_INFLUXDB_INIT_BUCKET` | sim | `sensor-data` no exemplo | Bucket de telemetria |
+| `DOCKER_INFLUXDB_INIT_ADMIN_TOKEN` | sim | — | Token do InfluxDB |
+| `INFLUX_WRITE_TIMEOUT` | não | `5s` | Timeout por tentativa de escrita |
+| `INFLUX_WRITE_ATTEMPTS` | não | `3` | Tentativas de escrita, entre 1 e 10 |
+| `MQTTBROKER` | sim | — | URL do broker |
+| `MQTTTOPIC` | no consumer | — | Filtro de telemetria |
+| `MQTT_USERNAME` | sim | — | Usuário do backend |
+| `MQTT_PASSWORD` | sim | — | Senha do backend |
+| `MQTT_QOS` | não | `1` | QoS de publicação e assinatura |
+| `MQTT_DEVICE_ID` | no Compose | — | Usuário/ID do dispositivo local |
+| `MQTT_DEVICE_PASSWORD` | no Compose | — | Senha do dispositivo local |
+| `API_KEY` | na API | — | Bearer token com pelo menos 32 caracteres |
+| `API_PORT` | não | `8000` | Porta interna da API |
 
+Variáveis do processo têm precedência sobre um arquivo `.env` local.
+
+## Segurança MQTT
+
+O broker local:
+
+- não permite acesso anônimo;
+- fornece ao backend leitura de toda a telemetria e escrita de comandos;
+- permite a cada dispositivo escrever apenas em `soiltune/telemetry/{seu_usuario}`;
+- permite a cada dispositivo ler apenas `soiltune/commands/{seu_usuario}`;
+- limita payloads MQTT a 64 KiB.
+
+A API fica vinculada a `127.0.0.1:8080`. Para exposição externa, use um proxy reverso com TLS.
+
+O listener MQTT do Compose usa autenticação e ACL, mas ainda opera sem criptografia. Não exponha a porta 1883 à internet. Para produção, configure MQTT sobre TLS na porta 8883 ou use um broker gerenciado.
+
+## Garantias de entrega
+
+MQTT usa QoS 1 por padrão, portanto broker e cliente podem entregar duplicatas. O processamento deve continuar idempotente do ponto de vista do produto.
+
+Uma escrita no InfluxDB possui timeout e retry limitado. Depois de esgotadas as tentativas, a mensagem é registrada como rejeitada e não existe fila durável local. O projeto não promete entrega exatamente uma vez.
+
+## Testes e qualidade
+
+```sh
+go test ./...
+go vet ./...
+gofmt -w ./api ./consumer ./internal
+```
+
+Os testes protegem:
+
+- autenticação da API;
+- validação e despacho de comandos;
+- contrato e mapeamento da telemetria;
+- correspondência entre tópico e `sensor_id`;
+- retry de escrita;
+- configuração e health/readiness.
+
+Com a stack Docker em execução, os dois fluxos externos podem ser verificados com:
+
+```sh
+go test -tags=integration ./integration
+```
+
+Esse teste publica telemetria MQTT e confirma sua presença no InfluxDB, além de enviar um comando HTTP e confirmar seu recebimento por um cliente MQTT autenticado.
+
+## Estrutura
+
+```text
+api/                    API HTTP de comandos
+consumer/               ingestão MQTT e escrita no InfluxDB
+internal/config/        configuração e validação de ambiente
+internal/models/        contratos de telemetria e comandos
+internal/mosquitto/     configuração do broker local
+docker-compose.yaml     stack local
+Dockerfile              imagens da API e do consumer
+```
+
+## Limitações conhecidas
+
+- o broker local ainda não possui TLS;
+- `202 Accepted` não representa confirmação física do dispositivo;
+- depois que o retry do InfluxDB é esgotado, a leitura é perdida;
+- o Compose provisiona uma conta de dispositivo para demonstração; ambientes com vários dispositivos devem gerenciar credenciais individualmente.

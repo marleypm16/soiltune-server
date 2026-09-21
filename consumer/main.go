@@ -37,7 +37,7 @@ func main() {
 	}
 	defer mqttClient.Disconnect(250)
 
-	if err := mqttHandler.Subscribe(mqttClient, mqttConfig.Topic, influxService.Handler()); err != nil {
+	if err := mqttHandler.Subscribe(mqttClient, mqttConfig.Topic, mqttConfig.QoS, influxService.Handler()); err != nil {
 		log.Fatal(err)
 	}
 

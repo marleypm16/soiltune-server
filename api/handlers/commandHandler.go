@@ -1,29 +1,32 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
-	"regexp"
+	"io"
 
-	"soiltune-consumer/api/services"
+	"soiltune-consumer/internal/apperrors"
 	"soiltune-consumer/internal/models"
 
 	"github.com/gofiber/fiber/v3"
 )
 
-var sensorIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
-
 type CommandHandler struct {
-	service *services.CommandService
+	service commandExecutor
 }
 
-func NewCommandHandler(service *services.CommandService) *CommandHandler {
+type commandExecutor interface {
+	Execute(sensorID string, command models.Command) error
+}
+
+func NewCommandHandler(service commandExecutor) *CommandHandler {
 	return &CommandHandler{service: service}
 }
 
 func (h *CommandHandler) Handle(c fiber.Ctx) error {
 	sensorID := c.Params("sensorId")
-	if !sensorIDPattern.MatchString(sensorID) {
+	if !models.IsValidSensorID(sensorID) {
 		return c.Status(fiber.StatusBadRequest).SendString("Invalid sensorId")
 	}
 
@@ -33,8 +36,13 @@ func (h *CommandHandler) Handle(c fiber.Ctx) error {
 	}
 
 	var payload models.Command
-	if err := json.Unmarshal(comando, &payload); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(comando))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
 		return c.Status(fiber.StatusBadRequest).SendString("Invalid JSON body")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return c.Status(fiber.StatusBadRequest).SendString("Request body must contain one JSON object")
 	}
 	if payload.Command == nil {
 		return c.Status(fiber.StatusBadRequest).SendString("Missing command field in request body")
@@ -44,7 +52,7 @@ func (h *CommandHandler) Handle(c fiber.Ctx) error {
 	}
 
 	if err := h.service.Execute(sensorID, payload); err != nil {
-		if errors.Is(err, fiber.ErrServiceUnavailable) {
+		if errors.Is(err, apperrors.ErrUnavailable) {
 			return c.Status(fiber.StatusServiceUnavailable).SendString("MQTT client is not connected")
 		}
 		return c.Status(fiber.StatusInternalServerError).SendString("Error occurred while processing command")
