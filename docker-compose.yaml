@@ -24,12 +24,34 @@ services:
     image: eclipse-mosquitto:latest
     container_name: mosquito
     ports:
-      - "1883:1883" # Porta MQTT padrão
-      - "9001:9001" # Porta para WebSockets (opcional)
+      - "1883:1883"
+    env_file:
+      - .env
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        : "$${MQTT_USERNAME:?MQTT_USERNAME is required}"
+        : "$${MQTT_PASSWORD:?MQTT_PASSWORD is required}"
+        : "$${MQTT_DEVICE_ID:?MQTT_DEVICE_ID is required}"
+        : "$${MQTT_DEVICE_PASSWORD:?MQTT_DEVICE_PASSWORD is required}"
+        case "$$MQTT_USERNAME" in *[!A-Za-z0-9_-]*|'') echo "invalid MQTT_USERNAME" >&2; exit 1;; esac
+        case "$$MQTT_DEVICE_ID" in *[!A-Za-z0-9_-]*|'') echo "invalid MQTT_DEVICE_ID" >&2; exit 1;; esac
+        case "$$MQTT_DEVICE_ID" in [A-Za-z0-9]*) ;; *) echo "MQTT_DEVICE_ID must start with a letter or digit" >&2; exit 1;; esac
+        [ "$${#MQTT_DEVICE_ID}" -le 64 ] || { echo "MQTT_DEVICE_ID must contain at most 64 characters" >&2; exit 1; }
+        [ "$${#MQTT_PASSWORD}" -ge 16 ] || { echo "MQTT_PASSWORD must contain at least 16 characters" >&2; exit 1; }
+        [ "$${#MQTT_DEVICE_PASSWORD}" -ge 16 ] || { echo "MQTT_DEVICE_PASSWORD must contain at least 16 characters" >&2; exit 1; }
+        [ "$$MQTT_USERNAME" != "$$MQTT_DEVICE_ID" ] || { echo "MQTT usernames must be unique" >&2; exit 1; }
+        mosquitto_passwd -b -c /tmp/mosquitto-passwords "$$MQTT_USERNAME" "$$MQTT_PASSWORD"
+        mosquitto_passwd -b /tmp/mosquitto-passwords "$$MQTT_DEVICE_ID" "$$MQTT_DEVICE_PASSWORD"
+        printf 'user %s\ntopic read soiltune/telemetry/#\ntopic write soiltune/commands/#\n\npattern write soiltune/telemetry/%%u\npattern read soiltune/commands/%%u\n' "$$MQTT_USERNAME" > /tmp/mosquitto-acl
+        chown root:mosquitto /tmp/mosquitto-passwords /tmp/mosquitto-acl
+        chmod 0640 /tmp/mosquitto-passwords /tmp/mosquitto-acl
+        exec /docker-entrypoint.sh mosquitto -c /mosquitto/config/mosquitto.conf
     volumes:
-      - ./internal/mosquitto/config:/mosquitto/config
-      - ./internal/mosquitto/data:/mosquitto/data
-      - ./internal/mosquitto/log:/mosquitto/log
+      - ./internal/mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
 
   consumer:
     build: 
@@ -52,13 +74,14 @@ services:
     env_file:
       - .env
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8000"
     depends_on:
       - mosquito
 
 volumes:
   influxdb_data:
   grafana_data:
+  mosquitto_data:
 networks:
   default:
     name: iot_network
